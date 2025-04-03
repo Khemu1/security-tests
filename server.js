@@ -3,6 +3,7 @@ const express = require("express");
 const http = require("node:http");
 const path = require("path");
 const passport = require("passport");
+const cookieSession = require("cookie-session");
 require("dotenv").config();
 const { Strategy } = require("passport-google-oauth20");
 
@@ -10,6 +11,8 @@ const PORT = 3000;
 const config = {
   CLIENT_ID: process.env.CLIENT_ID,
   CLIENT_SECRET: process.env.CLIENT_SECRET,
+  COOKIE_KEY_1: process.env.COOKIE_KEY_1,
+  COOKIE_KEY_2: process.env.COOKIE_KEY_2,
 };
 const app = express();
 
@@ -22,16 +25,36 @@ passport.use(
       clientID: config.CLIENT_ID,
       clientSecret: config.CLIENT_SECRET,
     },
-    (accssToken, refreshToken, profile, done) => {
+    (accessToken, refreshToken, profile, done) => {
       console.log("Google profile ", profile);
-      done(null, profile);
+      done(null, profile); // Pass profile to serialize
     }
   )
 );
-app.use(helmet());
+
+passport.serializeUser((user, done) => {
+  console.log("Serializing user ", user);
+  done(null, user.id);
+});
+
+passport.deserializeUser((id, done) => {
+  console.log("Deserializing id ", id);
+  done(null, { id });
+});
+
+app.use(
+  cookieSession({
+    name: "session",
+    maxAge: 24 * 60 * 60 * 1000, // 24h
+    keys: [config.COOKIE_KEY_1, config.COOKIE_KEY_2],
+  })
+);
 app.use(passport.initialize());
+app.use(passport.session());
+
 const checkLoggedIn = (req, res, next) => {
-  const isLoggedIn = true;
+  const isLoggedIn = req.isAuthenticated() && req.user.id; // passport.js saves data inside user
+
   if (!isLoggedIn) {
     return res.status(401).json({
       message: "You must log in",
@@ -40,34 +63,27 @@ const checkLoggedIn = (req, res, next) => {
   next();
 };
 
-app.get(
-  "/auth/google",
-  passport.authenticate("google", {
-    scope: ["email"],
-  })
-);
-
+app.get("/auth/google", passport.authenticate("google", { scope: ["email"] }));
 app.get(
   "/auth/google/callback",
   passport.authenticate("google", {
-    failureRedirect: "failure",
+    failureRedirect: "/failure",
     successRedirect: "/",
-    session: false,
-  }),
-  (req, res) => {
-    console.log("google replied");
-  }
+    session: true,
+  })
 );
 
 app.get("/auth/logout", (req, res) => {
-  res.send("Logged out");
+  req.logout(); // removes user from session
+  res.redirect("/");
 });
 
 app.get("/secret", checkLoggedIn, (_req, res) => {
   return res.send("Your secret is 41");
 });
+
 app.get("/failure", (req, res) => {
-  return res.send("login failed");
+  return res.send("Login failed");
 });
 
 app.get("/", (_req, res) => {
@@ -81,7 +97,6 @@ app.use((req, res) => {
     type: "Invalid route",
   });
 });
-
 const server = http.createServer(app);
 
 server.listen(PORT, () => {
